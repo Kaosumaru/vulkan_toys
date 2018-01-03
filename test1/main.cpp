@@ -348,6 +348,131 @@ private:
     VkSemaphore _semaphore = nullptr;
 };
 
+struct MVkSwapChainManager
+{
+public:
+    bool create(VkDevice device, VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t graphicsFamily, uint32_t presentFamily)
+    {
+        _device = device;
+        _physicalDevice = physicalDevice;
+        _surface = surface;
+        _graphicsFamily = graphicsFamily;
+        _presentFamily = presentFamily;
+        if (!createSwapChain()) return false;
+        createImageViews();
+
+        return true;
+    }
+
+    void cleanup()
+    {
+        if (!valid()) return;
+
+        for (auto imageView : _swapChainImageViews) {
+            vkDestroyImageView(_device, imageView, nullptr);
+        }
+
+        vkDestroySwapchainKHR(_device, _swapChain, nullptr);
+        _swapChain = nullptr;
+    }
+
+    bool valid() { return _swapChain != nullptr; }
+
+    VkSwapchainKHR swapChain() { return _swapChain; }
+    const auto& imageViews() { return _swapChainImageViews; }
+    VkFormat imageFormat() { return _swapChainImageFormat; }
+    VkExtent2D extent() { return _swapChainExtent; }
+private:
+    bool createSwapChain() {
+        MVkSwapChainSupportDetails swapChainSupport {_physicalDevice, _surface};
+
+        VkSurfaceFormatKHR surfaceFormat = swapChainSupport.chooseStandardSwapSurfaceFormat();
+        VkPresentModeKHR presentMode = swapChainSupport.chooseStandardSwapPresentMode();
+        VkExtent2D extent = swapChainSupport.chooseSwapExtent(WIDTH, HEIGHT);
+
+        if (extent.width == 0 || extent.height == 0) return false;
+
+        uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+        if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
+            imageCount = swapChainSupport.capabilities.maxImageCount;
+        }
+
+        VkSwapchainCreateInfoKHR createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        createInfo.surface = _surface;
+        createInfo.minImageCount = imageCount;
+        createInfo.imageFormat = surfaceFormat.format;
+        createInfo.imageColorSpace = surfaceFormat.colorSpace;
+        createInfo.imageExtent = extent;
+        createInfo.imageArrayLayers = 1;
+        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        uint32_t queueFamilyIndices[] = {_graphicsFamily, _presentFamily};
+
+        //check if queues are same, so imageSharingMode could be disabled
+        if (_graphicsFamily != _presentFamily) {
+            createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+            createInfo.queueFamilyIndexCount = 2;
+            createInfo.pQueueFamilyIndices = queueFamilyIndices;
+        }
+        else {
+            createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            createInfo.queueFamilyIndexCount = 0; // Optional
+            createInfo.pQueueFamilyIndices = nullptr; // Optional
+        }
+        createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+
+        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        createInfo.presentMode = presentMode;
+        createInfo.clipped = VK_TRUE;
+        createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+        if (vkCreateSwapchainKHR(_device, &createInfo, nullptr, &_swapChain) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create swap chain!");
+        }
+
+        _swapChainImages = MVkEnumerate(vkGetSwapchainImagesKHR, _device, _swapChain);
+        _swapChainImageFormat = surfaceFormat.format;
+        _swapChainExtent = extent;
+        return true;
+    }
+
+    void createImageViews() {
+        _swapChainImageViews.resize(_swapChainImages.size());
+        for (size_t i = 0; i < _swapChainImages.size(); i++) {
+            VkImageViewCreateInfo createInfo = {};
+            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            createInfo.image = _swapChainImages[i];
+            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            createInfo.format = _swapChainImageFormat;
+            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            createInfo.subresourceRange.baseMipLevel = 0;
+            createInfo.subresourceRange.levelCount = 1;
+            createInfo.subresourceRange.baseArrayLayer = 0;
+            createInfo.subresourceRange.layerCount = 1;
+            if (vkCreateImageView(_device, &createInfo, nullptr, &_swapChainImageViews[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create image views!");
+            }
+        }
+    }
+
+    VkDevice _device = nullptr;
+    VkPhysicalDevice _physicalDevice = nullptr;
+    VkSurfaceKHR _surface = nullptr;
+    uint32_t _graphicsFamily = 0;
+    uint32_t _presentFamily = 0;
+
+    VkSwapchainKHR _swapChain = nullptr;
+    std::vector<VkImage> _swapChainImages;
+    VkFormat _swapChainImageFormat;
+    VkExtent2D _swapChainExtent;
+
+    std::vector<VkImageView> _swapChainImageViews;
+};
 
 class HelloTriangleApplication {
 public:
@@ -379,11 +504,7 @@ private:
     VkPipelineLayout pipelineLayout = nullptr;
     VkPipeline graphicsPipeline = nullptr;
 
-    VkSwapchainKHR swapChain = nullptr;
-    std::vector<VkImage> swapChainImages;
-    VkFormat swapChainImageFormat;
-    VkExtent2D swapChainExtent;
-    std::vector<VkImageView> swapChainImageViews;
+    MVkSwapChainManager _swapChainManager;
     std::vector<VkFramebuffer> swapChainFramebuffers;
 
     VkCommandPool commandPool = nullptr;
@@ -423,25 +544,30 @@ private:
         createSemaphores();
         createCommandPool();
 
-        recreateSwapChain();
+        recreateFramebuffers();
 
     }
 
-    void recreateSwapChain() {
+    void recreateFramebuffers() {
         vkDeviceWaitIdle(device);
 
-        cleanupSwapChain();
+        cleanupFramebuffers();
 
-        if (!createSwapChain()) return;
-        createImageViews();
+        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+        if (!_swapChainManager.create(device, physicalDevice, surface, indices.graphicsFamily, indices.presentFamily)) return;
+
+        //pipeline must be recreated since potentially viewport size & output format changed
         createRenderPass();
         createGraphicsPipeline();
+
+        //we need to create new framebuffers with new renderpass data & image views
         createFramebuffers();
+        //and new command buffers for these framebuffers
         createCommandBuffers();
     }
 
-    void cleanupSwapChain() {
-        if (!swapChain) return;
+    void cleanupFramebuffers() {
+        if (!_swapChainManager.valid()) return;
         for (auto framebuffer : swapChainFramebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
@@ -452,15 +578,12 @@ private:
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
         vkDestroyRenderPass(device, renderPass, nullptr);
 
-        for (auto imageView : swapChainImageViews) {
-            vkDestroyImageView(device, imageView, nullptr);
-        }
-        vkDestroySwapchainKHR(device, swapChain, nullptr);
-        swapChain = nullptr;
+
+        _swapChainManager.cleanup();
     }
 
     void cleanup() {
-        cleanupSwapChain();
+        cleanupFramebuffers();
 
         sync.~SyncSemaphores();
         vkDestroyCommandPool(device, commandPool, nullptr);
@@ -488,13 +611,14 @@ private:
     void drawFrame() {
         vkQueueWaitIdle(presentQueue); //TODO possibly suboptimal
         
-        if (!swapChain) 
+        if (!_swapChainManager.valid())
         {
             //TODO sleep a bit
-            recreateSwapChain();
+            recreateFramebuffers();
             return;
         }
 
+        auto swapChain = _swapChainManager.swapChain();
         uint32_t imageIndex;
         VkResult result = vkAcquireNextImageKHR(device, swapChain, std::numeric_limits<uint64_t>::max(), sync.imageAvailableSemaphore.get(), VK_NULL_HANDLE, &imageIndex);
         if (shouldRecreateSwapChain(result)) return;
@@ -545,7 +669,7 @@ private:
     bool shouldRecreateSwapChain(VkResult result)
     {
         if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-            recreateSwapChain();
+            recreateFramebuffers();
             return true;
         }
         else if (result != VK_SUCCESS) {
@@ -701,87 +825,9 @@ private:
         vkGetDeviceQueue(device, indices.presentFamily, 0, &presentQueue);
     }
 
-    bool createSwapChain() {
-        MVkSwapChainSupportDetails swapChainSupport {physicalDevice, surface};
-
-        VkSurfaceFormatKHR surfaceFormat = swapChainSupport.chooseStandardSwapSurfaceFormat();
-        VkPresentModeKHR presentMode = swapChainSupport.chooseStandardSwapPresentMode();
-        VkExtent2D extent = swapChainSupport.chooseSwapExtent(WIDTH, HEIGHT);
-
-        if (extent.width == 0 || extent.height == 0) return false;
-
-        uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
-        if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
-            imageCount = swapChainSupport.capabilities.maxImageCount;
-        }
-
-        VkSwapchainCreateInfoKHR createInfo = {};
-        createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-        createInfo.surface = surface;
-        createInfo.minImageCount = imageCount;
-        createInfo.imageFormat = surfaceFormat.format;
-        createInfo.imageColorSpace = surfaceFormat.colorSpace;
-        createInfo.imageExtent = extent;
-        createInfo.imageArrayLayers = 1;
-        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
-        uint32_t queueFamilyIndices[] = {(uint32_t)indices.graphicsFamily, (uint32_t)indices.presentFamily};
-
-        //check if queues are same, so imageSharingMode could be disabled
-        if (indices.graphicsFamily != indices.presentFamily) {
-            createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-            createInfo.queueFamilyIndexCount = 2;
-            createInfo.pQueueFamilyIndices = queueFamilyIndices;
-        }
-        else {
-            createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            createInfo.queueFamilyIndexCount = 0; // Optional
-            createInfo.pQueueFamilyIndices = nullptr; // Optional
-        }
-        createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
-
-        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        createInfo.presentMode = presentMode;
-        createInfo.clipped = VK_TRUE;
-        createInfo.oldSwapchain = VK_NULL_HANDLE;
-
-        if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create swap chain!");
-        }
-
-        swapChainImages = MVkEnumerate(vkGetSwapchainImagesKHR, device, swapChain);
-        swapChainImageFormat = surfaceFormat.format;
-        swapChainExtent = extent;
-        return true;
-    }
-
-    void createImageViews() {
-        swapChainImageViews.resize(swapChainImages.size());
-        for (size_t i = 0; i < swapChainImages.size(); i++) {
-            VkImageViewCreateInfo createInfo = {};
-            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            createInfo.image = swapChainImages[i];
-            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            createInfo.format = swapChainImageFormat;
-            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            createInfo.subresourceRange.baseMipLevel = 0;
-            createInfo.subresourceRange.levelCount = 1;
-            createInfo.subresourceRange.baseArrayLayer = 0;
-            createInfo.subresourceRange.layerCount = 1;
-            if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
-                throw std::runtime_error("failed to create image views!");
-            }
-        }
-    }
-
     void createRenderPass() {
         VkAttachmentDescription colorAttachment = {};
-        colorAttachment.format = swapChainImageFormat;
+        colorAttachment.format = _swapChainManager.imageFormat();
         colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
         colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -823,6 +869,8 @@ private:
     }
 
     void createGraphicsPipeline() {
+        auto swapChainExtent = _swapChainManager.extent();
+
         MVkShaderModule vertShaderModule(device, "shaders/vert.spv");
         MVkShaderModule fragShaderModule(device, "shaders/frag.spv");
 
@@ -970,6 +1018,8 @@ private:
     }
 
     void createFramebuffers() {
+        auto swapChainExtent = _swapChainManager.extent();
+        auto& swapChainImageViews = _swapChainManager.imageViews();
         swapChainFramebuffers.resize(swapChainImageViews.size());
         for (size_t i = 0; i < swapChainImageViews.size(); i++) {
             VkImageView attachments[] = {
@@ -1005,6 +1055,8 @@ private:
     }
 
     void createCommandBuffers() {
+        auto swapChainExtent = _swapChainManager.extent();
+
         commandBuffers.resize(swapChainFramebuffers.size());
 
         VkCommandBufferAllocateInfo allocInfo = {};
