@@ -1,0 +1,39 @@
+{
+  "configurations": [
+    {
+        "inheritEnvironments": [
+            "msvc_x64"
+        ],
+        "name": "x64-Debug",
+        "includePath": [
+            "${env.INCLUDE}"
+        ],
+        "variables": [
+
+        ],
+        "defines": [
+            "WIN32",
+            "_DEBUG",
+            "UNICODE",
+            "_UNICODE"
+        ],
+        "intelliSenseMode": "msvc-x64"
+    },
+    {
+      "inheritEnvironments": [
+        "msvc_x64"
+      ],
+      "name": "x64-Release",
+      "includePath": [
+        "${env.INCLUDE}"
+      ],
+      "defines": [
+        "WIN32",
+        "NDEBUG",
+        "UNICODE",
+        "_UNICODE"
+      ],
+      "intelliSenseMode": "msvc-x64"
+    }
+  ]
+}
