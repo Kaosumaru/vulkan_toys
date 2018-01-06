@@ -4,7 +4,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_executable(ExampleVulkan main.cpp mvk/LogicalDeviceManager.cpp ../contrib/vulkan_ext_loader/vulkan_ext.c)
+add_executable(ExampleVulkan main.cpp mvk/LogicalDevice.cpp ../contrib/vulkan_ext_loader/vulkan_ext.c)
 
 if (MSVC)
 	add_definitions( "/MP /W3 /D_CRT_SECURE_NO_WARNINGS /wd4005 /wd4996 /wd4503 /nologo" )
