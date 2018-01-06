@@ -16,11 +16,8 @@
 #include <vector>
 #include <set>
 
-#include <type_traits>
 
-#include <filesystem>
 
-#include "function_traits.hpp"
 
 
 const int WIDTH = 800;
@@ -482,7 +479,6 @@ private:
 
 
 int main() {
-    std::string path = std::experimental::filesystem::current_path().string();
     HelloTriangleApplication app;
 
     try {
