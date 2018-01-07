@@ -31,6 +31,8 @@ namespace mvk
         vk::SurfaceKHR surface() { return *_surface; }
         vk::PhysicalDevice physicalDevice() { return _physicalDevice; }
         const QueueFamilyIndices& indices() { return _indices; }
+
+        uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties);
     protected:
         void init() 
         {
@@ -54,6 +56,7 @@ namespace mvk
         mvk::ValidationLayers _validationLayersManager;
 
         vk::PhysicalDevice _physicalDevice;
+        vk::PhysicalDeviceMemoryProperties _memoryProperties;
         QueueFamilyIndices _indices;
 
         vk::UniqueSurfaceKHR _surface;

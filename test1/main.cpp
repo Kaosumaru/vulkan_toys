@@ -16,7 +16,7 @@
 #include <vector>
 #include <set>
 
-
+#include <glm/glm.hpp>
 
 
 
@@ -27,9 +27,12 @@ const int HEIGHT = 600;
 Implement
 - vkQueueWaitIdle "One thing i want to point out is that using queue wait idle on each frame is not the best thing to do. In fact the performance could be worst than GL."
 - split code into logical subobjects
+- implement staging buffers, or noncoherent
+
 
 Read about
 - vkSubpassDependency "It assumes that the transition occurs at the start of the pipeline, but we haven't acquired the image yet at that point! There are two ways to deal with this problem. "
+- use device specific functions
 
 
 X (seems to be pointless in game case) createInfo.oldSwapchain "You need to pass the previous swap chain to the oldSwapChain field in the VkSwapchainCreateInfoKHR struct and destroy the old swap chain as soon as you've finished using it."
@@ -37,8 +40,63 @@ X (seems to be pointless in game case) createInfo.oldSwapchain "You need to pass
 
 
 
+namespace mvk
+{
+    class Buffer
+    {
+    public:
+        Buffer(mvk::LogicalDevice& vulkan, vk::BufferUsageFlags usage, vk::DeviceSize size)
+        {
+            _device = vulkan.device();
+            createBuffer(vulkan, usage, size);
+        }
 
+        auto MapMemory(std::size_t offset, std::size_t size)
+        {
+            return _device.mapMemory(*_memory, offset, size);
+        }
 
+        auto UnmapMemory()
+        {
+            return _device.unmapMemory(*_memory);
+        }
+
+        void Copy(void *src, std::size_t size, std::size_t offset = 0)
+        {
+            auto dst = MapMemory(offset, size);
+            memcpy(dst, src, size);
+            UnmapMemory();
+        }
+
+        vk::Buffer get() { return *_buffer; }
+    protected:
+        void createBuffer(mvk::LogicalDevice& vulkan, vk::BufferUsageFlags usage, vk::DeviceSize size)
+        {
+            vk::BufferCreateInfo bufferInfo = {};
+            bufferInfo.size = size;
+            bufferInfo.usage = usage;
+            bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+
+            _buffer = vulkan.device().createBufferUnique(bufferInfo);
+            auto memRequirements = vulkan.device().getBufferMemoryRequirements(*_buffer);
+
+            //allocate memory
+            vk::MemoryAllocateInfo allocInfo = {};
+            allocInfo.allocationSize = memRequirements.size;
+            //host enables mapping, coherent implicitly flushes mapped memory
+            allocInfo.memoryTypeIndex = vulkan.findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+            _memory = vulkan.device().allocateMemoryUnique(allocInfo);
+
+            //bind memory
+            vulkan.device().bindBufferMemory(*_buffer, *_memory, 0);
+        }
+
+        vk::Device _device;
+        vk::UniqueBuffer _buffer;
+        vk::UniqueDeviceMemory _memory;
+    };
+
+}
 
 
 
@@ -76,6 +134,50 @@ private:
     } sync;
 
 
+    auto device() { return _vulkan->device(); }
+    auto physicalDevice() { return _vulkan->physicalDevice(); }
+
+    //----------------------------
+    //VBO
+    struct Vertex {
+        glm::vec2 pos;
+        glm::vec3 color;
+
+
+        static vk::VertexInputBindingDescription getBindingDescription() 
+        {
+            vk::VertexInputBindingDescription bindingDescription = {};
+            bindingDescription.binding = 0;
+            bindingDescription.stride = sizeof(Vertex);
+            bindingDescription.inputRate = vk::VertexInputRate::eVertex;
+            return bindingDescription;
+        }
+
+        static auto getAttributeDescriptions() 
+        {
+            std::array<vk::VertexInputAttributeDescription, 2> attributeDescriptions = {};
+            attributeDescriptions[0].binding = 0;
+            attributeDescriptions[0].location = 0;
+            attributeDescriptions[0].format = vk::Format::eR32G32Sfloat;
+            attributeDescriptions[0].offset = offsetof(Vertex, pos);
+
+            attributeDescriptions[1].binding = 0;
+            attributeDescriptions[1].location = 1;
+            attributeDescriptions[1].format = vk::Format::eR32G32B32Sfloat;
+            attributeDescriptions[1].offset = offsetof(Vertex, color);
+            return attributeDescriptions;
+        }
+    };
+
+    const std::vector<Vertex> vertices = {
+        {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+        {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+        {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+    };
+
+    std::unique_ptr<mvk::Buffer> _vertexBuffer;
+    //----------------------------
+
 
     void initWindow() {
         glfwInit();
@@ -91,11 +193,20 @@ private:
         createQueues();
         createSemaphores();
         createCommandPool();
+        createVertexBuffer();
+
         recreateFramebuffers();
     }
 
+    void createVertexBuffer()
+    {
+        auto size = sizeof(vertices[0]) * vertices.size();
+        _vertexBuffer = std::make_unique<mvk::Buffer>(*_vulkan, vk::BufferUsageFlagBits::eVertexBuffer, size);
+        _vertexBuffer->Copy((void*)vertices.data(), size);
+    }
+
     void recreateFramebuffers() {
-        _vulkan->device().waitIdle();
+        device().waitIdle();
 
         cleanupFramebuffers();
 
@@ -138,11 +249,10 @@ private:
             drawFrame();
         }
 
-        _vulkan->device().waitIdle();
+        device().waitIdle();
     }
 
     void drawFrame() {
-        auto device = _vulkan->device();
         vkQueueWaitIdle(presentQueue); //TODO possibly suboptimal
         
         if (!_swapChainManager.valid())
@@ -153,7 +263,7 @@ private:
         }
 
         auto& swapChain = _swapChainManager.swapChain();
-        auto [result, imageIndex] = device.acquireNextImageKHR(*swapChain, std::numeric_limits<uint64_t>::max(), sync.imageAvailableSemaphore.get(), nullptr);
+        auto [result, imageIndex] = device().acquireNextImageKHR(*swapChain, std::numeric_limits<uint64_t>::max(), sync.imageAvailableSemaphore.get(), nullptr);
         if (shouldRecreateSwapChain(result)) return;
 
         vk::SubmitInfo submitInfo = {};
@@ -170,7 +280,7 @@ private:
 
         //submit this command buffer
         submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &commandBuffers[imageIndex].get(); //TODO check
+        submitInfo.pCommandBuffers = &commandBuffers[imageIndex].get();
 
         //notify renderFinishedSemaphore when render is done
         vk::Semaphore signalSemaphores[] = {sync.renderFinishedSemaphore.get()};
@@ -213,10 +323,9 @@ private:
 
     void createQueues()
     {
-        auto device = _vulkan->device();
         auto& indices = _vulkan->indices();
-        graphicsQueue = device.getQueue(indices.graphicsFamily, 0);
-        presentQueue = device.getQueue(indices.presentFamily, 0);
+        graphicsQueue = device().getQueue(indices.graphicsFamily, 0);
+        presentQueue = device().getQueue(indices.presentFamily, 0);
     }
 
     void createRenderPass() 
@@ -257,16 +366,15 @@ private:
         renderPassInfo.dependencyCount = 1;
         renderPassInfo.pDependencies = &dependency;
 
-        renderPass = _vulkan->device().createRenderPassUnique(renderPassInfo);
+        renderPass = device().createRenderPassUnique(renderPassInfo);
     }
 
     void createGraphicsPipeline() 
     {
-        auto device = _vulkan->device();
         auto swapChainExtent = _swapChainManager.extent();
 
-        auto vertShaderModule = mvk::loadShaderFromFile(device, "shaders/vert.spv");
-        auto fragShaderModule = mvk::loadShaderFromFile(device, "shaders/frag.spv");
+        auto vertShaderModule = mvk::loadShaderFromFile(device(), "shaders/vert.spv");
+        auto fragShaderModule = mvk::loadShaderFromFile(device(), "shaders/frag.spv");
 
         vk::PipelineShaderStageCreateInfo vertShaderStageInfo = {};
         vertShaderStageInfo.stage = vk::ShaderStageFlagBits::eVertex;
@@ -280,14 +388,17 @@ private:
 
         vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-        //dummy vertex input
-        vk::PipelineVertexInputStateCreateInfo vertexInputInfo = {};
-        vertexInputInfo.vertexBindingDescriptionCount = 0;
-        vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional
-        vertexInputInfo.vertexAttributeDescriptionCount = 0;
-        vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+        //vertex input
+        auto bindingDescription = Vertex::getBindingDescription();
+        auto attributeDescriptions = Vertex::getAttributeDescriptions();
 
-                                                                //topology TODO READ MORE
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo = {};
+        vertexInputInfo.vertexBindingDescriptionCount = 1;
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+        //topology TODO READ MORE
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly = {};
         inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
         inputAssembly.primitiveRestartEnable = VK_FALSE;
@@ -374,7 +485,7 @@ private:
         pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
         pipelineLayoutInfo.pPushConstantRanges = 0; // Optional
 
-        pipelineLayout = device.createPipelineLayoutUnique(pipelineLayoutInfo);
+        pipelineLayout = device().createPipelineLayoutUnique(pipelineLayoutInfo);
 
 
         //create graphic pipeline
@@ -394,12 +505,11 @@ private:
         pipelineInfo.subpass = 0;
         pipelineInfo.basePipelineHandle = nullptr; // Optional
         pipelineInfo.basePipelineIndex = -1; // Optional
-        graphicsPipeline = device.createGraphicsPipelineUnique(nullptr, pipelineInfo);
+        graphicsPipeline = device().createGraphicsPipelineUnique(nullptr, pipelineInfo);
     }
 
     void createFramebuffers() 
     {
-        auto device = _vulkan->device();
         auto swapChainExtent = _swapChainManager.extent();
         auto& swapChainImageViews = _swapChainManager.imageViews();
         swapChainFramebuffers.resize(swapChainImageViews.size());
@@ -414,7 +524,7 @@ private:
             framebufferInfo.width = swapChainExtent.width;
             framebufferInfo.height = swapChainExtent.height;
             framebufferInfo.layers = 1;
-            swapChainFramebuffers[i] = device.createFramebufferUnique(framebufferInfo);
+            swapChainFramebuffers[i] = device().createFramebufferUnique(framebufferInfo);
         }
     }
 
@@ -422,12 +532,11 @@ private:
     {
         vk::CommandPoolCreateInfo poolInfo = {};
         poolInfo.queueFamilyIndex = _vulkan->indices().graphicsFamily;
-        commandPool = _vulkan->device().createCommandPoolUnique(poolInfo);
+        commandPool = device().createCommandPoolUnique(poolInfo);
     }
 
     void createCommandBuffers() 
     {
-        auto device = _vulkan->device();
         auto swapChainExtent = _swapChainManager.extent();
 
         commandBuffers.resize(swapChainFramebuffers.size());
@@ -437,15 +546,18 @@ private:
         allocInfo.level = vk::CommandBufferLevel::ePrimary;
         allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
 
-        commandBuffers = device.allocateCommandBuffersUnique(allocInfo);
+        commandBuffers = device().allocateCommandBuffersUnique(allocInfo);
 
         for (size_t i = 0; i < commandBuffers.size(); i++) 
         {
+            auto& vb = _vertexBuffer->get();
+            auto& commandBuffer = *commandBuffers[i];
+
             vk::CommandBufferBeginInfo beginInfo = {};
             beginInfo.flags = vk::CommandBufferUsageFlagBits::eSimultaneousUse;
             beginInfo.pInheritanceInfo = nullptr; // Optional
 
-            commandBuffers[i]->begin(beginInfo);
+            commandBuffer.begin(beginInfo);
 
             vk::RenderPassBeginInfo renderPassInfo = {};
             renderPassInfo.renderPass = *renderPass;
@@ -457,20 +569,20 @@ private:
             renderPassInfo.clearValueCount = 1;
             renderPassInfo.pClearValues = &clearColor;
 
-            commandBuffers[i]->beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
-            commandBuffers[i]->bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
-            commandBuffers[i]->draw(3, 1, 0, 0);
-            commandBuffers[i]->endRenderPass();
+            commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
+            commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
+            commandBuffer.bindVertexBuffers(0, {vb}, {0});
+            commandBuffer.draw(static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+            commandBuffer.endRenderPass();
 
-            commandBuffers[i]->end();
+            commandBuffer.end();
         }
     }
 
     void createSemaphores() 
     {
-        auto device = _vulkan->device();
-        sync.imageAvailableSemaphore = device.createSemaphoreUnique({});
-        sync.renderFinishedSemaphore = device.createSemaphoreUnique({});
+        sync.imageAvailableSemaphore = device().createSemaphoreUnique({});
+        sync.renderFinishedSemaphore = device().createSemaphoreUnique({});
     }
 
 

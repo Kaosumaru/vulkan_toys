@@ -87,6 +87,8 @@ void LogicalDevice::pickPhysicalDevice()
     {
         throw std::runtime_error("failed to find a suitable GPU!");
     }
+
+    _memoryProperties = _physicalDevice.getMemoryProperties();
 }
 
 LogicalDevice::QueueFamilyIndices LogicalDevice::findQueueFamilies(vk::PhysicalDevice physicalDevice)
@@ -114,6 +116,16 @@ LogicalDevice::QueueFamilyIndices LogicalDevice::findQueueFamilies(vk::PhysicalD
         i++;
     }
     return indices;
+}
+
+uint32_t LogicalDevice::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties)
+{
+    for (uint32_t i = 0; i < _memoryProperties.memoryTypeCount; i++) {
+        if ((typeFilter & (1 << i)) && (_memoryProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 void LogicalDevice::createLogicalDevice() 
